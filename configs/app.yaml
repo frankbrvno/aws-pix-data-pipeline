@@ -1,0 +1,11 @@
+aws:
+  bucket: pix-datalake-benjivoid
+
+paths:
+  bronze: bronze
+  silver: silver
+  gold: gold
+
+defaults:
+  database: "2026-03"
+  top: 50

@@ -1,0 +1,12 @@
+pix_municipio:
+  endpoint: "TransacoesPixPorMunicipio(DataBase=@DataBase)"
+  param_name: "DataBase"
+  bronze_parquet: "transacoes_pix_por_municipio"
+  bronze_raw: "transacoes_pix_por_municipio_raw"
+
+  silver:
+    int_cols: ["municipio_ibge", "estado_ibge"]
+    float_prefixes: ["vl_"]
+    int_prefixes: ["qt_"]
+    required: ["municipio_ibge", "estado_ibge", "municipio", "estado"]
+    normalize_text: ["municipio", "estado", "regiao", "sigla_regiao"]
