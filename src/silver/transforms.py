@@ -90,11 +90,14 @@ def cast_numbers(
 
 def cast_anomes(df: pd.DataFrame, col: str = "anomes") -> pd.DataFrame:
     """
-    Garante que 'anomes' esteja como string.
-    (Você pode transformar em DATE depois no Gold ou no Athena)
+    Se 'anomes' for numérico (ex: 202601), mantém como inteiro.
+    Se vier como texto (ex: '2026-03'), converte para string.
     """
     df = df.copy()
     if col in df.columns:
+        # se já for número, mantém
+        if pd.api.types.is_numeric_dtype(df[col]):
+            return df
         df[col] = df[col].astype(str)
     return df
 

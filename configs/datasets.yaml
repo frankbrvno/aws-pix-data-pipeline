@@ -10,3 +10,34 @@ pix_municipio:
     int_prefixes: ["qt_"]
     required: ["municipio_ibge", "estado_ibge", "municipio", "estado"]
     normalize_text: ["municipio", "estado", "regiao", "sigla_regiao"]
+
+pix_fraudes_med:
+  endpoint: "EstatisticasFraudesPix(Database=@Database)"
+  param_name: "Database"
+  bronze_parquet: "estatisticas_fraudes_pix"
+  bronze_raw: "estatisticas_fraudes_pix_raw"
+
+  silver:
+    int_cols:
+      - anomes
+      - qtdepixcontestados
+      - qtdecontestacoesaceitas
+      - qtdecontestacoesrejeitadas
+      - qtdeusuarioscommarcacoesdefraude
+      - qtdechavespixcommarcacoesdefraude
+      - quantidadedevolvidaintegralmentepormeiodomed
+      - quantidadedevolvidaparcialmentepormeiodomed
+      - quantidadedenaodevolvidossaldoinsuficiente
+      - quantidadedenaodevolvidoscontaencerrada
+      - quantidadedenaodevolvidosmotivosdiversos
+      - qtdepixbloqueadoscautelarmenteeliberados
+      - qtdepixbloqueadoscautelarmenteedevolvidos
+
+    float_prefixes: ["valorpix", "percentual"]
+
+    int_prefixes: []
+
+    required:
+      - anomes
+
+    normalize_text: []
