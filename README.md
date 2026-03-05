@@ -66,5 +66,5 @@ aws-pix-data-engineering-pipeline/
 ---
 
 # Datasets utilizados
-
+Dados públicos do Banco Central disponíveis via API Estatísticas do Pix.
 Dados públicos do Banco Central disponíveis via API Estatísticas do Pix.
