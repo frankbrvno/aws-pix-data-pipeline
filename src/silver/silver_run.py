@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from src.core.partitioning import build_partition
 from src.core.config import load_app_config, load_datasets_config
 from src.core.logger import get_logger
 from src.core.s3_io import latest_key, download, upload
@@ -45,14 +46,14 @@ def run_silver(dataset_id: str, database: str | None = None) -> None:
     silver_root = app["paths"]["silver"]
 
     database = database or app["defaults"]["database"]
-    ano_mes = database.replace("-", "")
+    part_col, part_value = build_partition(ds, database)
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
     bronze_dataset = ds["bronze_parquet"]          # nome do dataset no bronze
     silver_dataset = ds.get("silver_dataset") or bronze_dataset  # nome no silver (default = mesmo)
 
     # 2) encontrar o parquet mais recente do bronze (na partição do mês)
-    bronze_prefix = f"{bronze_root}/{bronze_dataset}/ano_mes={ano_mes}/"
+    bronze_prefix = f"{bronze_root}/{bronze_dataset}/{part_col}={part_value}/"
     bronze_key = latest_key(bucket, bronze_prefix)
     logger.info(f"Bronze latest: s3://{bucket}/{bronze_key}")
 
@@ -73,8 +74,8 @@ def run_silver(dataset_id: str, database: str | None = None) -> None:
             logger.info(f"dtype {c}: {df2[c].dtype} | nulos={int(df2[c].isna().sum())}")
 
     # 5) salvar no S3 (silver)
-    silver_prefix = f"{silver_root}/{silver_dataset}/ano_mes={ano_mes}/"
-    out_key = f"{silver_prefix}{silver_dataset}_{ano_mes}_{run_ts}.parquet"
+    silver_prefix = f"{silver_root}/{silver_dataset}/{part_col}={part_value}/"
+    out_key = f"{silver_prefix}{silver_dataset}_{part_value}_{run_ts}.parquet"
 
     local_out = "/tmp/silver_output.parquet"
     df2.to_parquet(local_out, index=False)

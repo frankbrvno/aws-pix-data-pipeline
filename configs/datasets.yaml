@@ -1,3 +1,31 @@
+pix_estatisticas_transacoes:
+  endpoint: "EstatisticasTransacoesPix(Database=@Database)"
+  param_name: "Database"
+  bronze_parquet: "estatisticas_transacoes_pix"
+  bronze_raw: "estatisticas_transacoes_pix_raw"
+
+  silver:
+    int_cols: ["anomes", "quantidade"]
+
+    float_prefixes: ["valor"]
+
+    int_prefixes: []
+
+    required:
+      - anomes
+      - valor
+      - quantidade
+
+    normalize_text:
+      - pag_pfpj
+      - rec_pfpj
+      - pag_regiao
+      - rec_regiao
+      - pag_idade
+      - rec_idade
+      - formainiciacao
+      - natureza
+      - finalidade
 pix_municipio:
   endpoint: "TransacoesPixPorMunicipio(DataBase=@DataBase)"
   param_name: "DataBase"
@@ -41,3 +69,28 @@ pix_fraudes_med:
       - anomes
 
     normalize_text: []
+
+pix_chaves:
+  endpoint: "ChavesPix(Data=@Data)"
+  param_name: "Data"
+  bronze_parquet: "estoque_chaves_pix"
+  bronze_raw: "estoque_chaves_pix_raw"
+
+  partition:
+    type: "day"
+    column: "data"
+    format: "%Y%m%d"
+
+  silver:
+    int_cols: ["qtdchaves"]
+
+    float_prefixes: []
+    int_prefixes: []
+
+    required: ["data", "ispb", "tipochave", "qtdchaves"]
+
+    normalize_text:
+      - ispb
+      - nome
+      - naturezausuario
+      - tipochave

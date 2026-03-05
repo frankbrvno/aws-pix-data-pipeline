@@ -24,10 +24,12 @@ from datetime import datetime, timezone
 import boto3
 import pandas as pd
 
+from src.core.partitioning import build_partition
 from src.core.config import load_app_config, load_datasets_config
 from src.core.logger import get_logger
 from src.core.olinda import fetch_json
 from src.core.s3_io import put_json
+
 
 logger = get_logger(__name__)
 
@@ -95,8 +97,8 @@ def run_ingest(dataset_id: str, database: str | None = None, top: int | None = N
     bronze_parquet = ds["bronze_parquet"]
     bronze_raw = ds["bronze_raw"]
 
-    # particionamento (ano_mes=YYYYMM)
-    ano_mes = database.replace("-", "")
+   # particionamento no S3 (month ou day, dependendo do dataset)
+    part_col, part_value = build_partition(ds, database)
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
     # 4) montar URL e chamar API
@@ -111,7 +113,10 @@ def run_ingest(dataset_id: str, database: str | None = None, top: int | None = N
     logger.info(f"Rows retornadas: {len(rows)}")
 
     # 5) salvar RAW (payload inteiro, em JSON)
-    raw_key = f"{bronze_root}/{bronze_raw}/ano_mes={ano_mes}/{bronze_raw}_{ano_mes}_{run_ts}.json"
+    raw_key = (
+    f"{bronze_root}/{bronze_raw}/{part_col}={part_value}/"
+    f"{bronze_raw}_{part_value}_{run_ts}.json"
+    )
     raw_uri = put_json(bucket, raw_key, payload)
     logger.info(f"RAW salvo: {raw_uri}")
 
@@ -125,7 +130,10 @@ def run_ingest(dataset_id: str, database: str | None = None, top: int | None = N
     df["ingestion_ts_utc"] = datetime.now(timezone.utc).isoformat()
     df["source_database"] = database
 
-    parquet_key = f"{bronze_root}/{bronze_parquet}/ano_mes={ano_mes}/{bronze_parquet}_{ano_mes}_{run_ts}.parquet"
+    parquet_key = (
+    f"{bronze_root}/{bronze_parquet}/{part_col}={part_value}/"
+    f"{bronze_parquet}_{part_value}_{run_ts}.parquet"
+    )
     local = f"/tmp/{os.path.basename(parquet_key)}"
 
     # escreve local e sobe pro S3
