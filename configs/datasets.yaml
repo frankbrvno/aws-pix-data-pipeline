@@ -78,7 +78,7 @@ pix_chaves:
 
   partition:
     type: "day"
-    column: "data"
+    column: "data_part"
     format: "%Y%m%d"
 
   silver:
