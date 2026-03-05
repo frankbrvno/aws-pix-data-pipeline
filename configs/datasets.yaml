@@ -26,6 +26,9 @@ pix_estatisticas_transacoes:
       - formainiciacao
       - natureza
       - finalidade
+  athena:
+    silver_table: estatisticas_transacoes_pix_silver
+
 pix_municipio:
   endpoint: "TransacoesPixPorMunicipio(DataBase=@DataBase)"
   param_name: "DataBase"
@@ -38,6 +41,8 @@ pix_municipio:
     int_prefixes: ["qt_"]
     required: ["municipio_ibge", "estado_ibge", "municipio", "estado"]
     normalize_text: ["municipio", "estado", "regiao", "sigla_regiao"]
+  athena:
+    silver_table: transacoes_pix_por_municipio_silver
 
 pix_fraudes_med:
   endpoint: "EstatisticasFraudesPix(Database=@Database)"
@@ -69,6 +74,8 @@ pix_fraudes_med:
       - anomes
 
     normalize_text: []
+  athena:
+    silver_table: estatisticas_fraudes_pix_silver
 
 pix_chaves:
   endpoint: "ChavesPix(Data=@Data)"
@@ -94,3 +101,5 @@ pix_chaves:
       - nome
       - naturezausuario
       - tipochave
+  athena:
+    silver_table: estoque_chaves_pix_silver

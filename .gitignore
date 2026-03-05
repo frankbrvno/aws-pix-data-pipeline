@@ -6,3 +6,25 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+
+# Airflow
+airflow/logs/
+airflow/plugins/__pycache__/
+
+# Docker
+*.log
+docker-data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# temp
+tmp/

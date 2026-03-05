@@ -7,5 +7,11 @@ paths:
   gold: gold
 
 defaults:
-  database: "2026-01"
+  database: "2025-01"
   top: 100000
+
+athena:
+  database: pix_dw
+  workgroup: primary
+  output_location: "s3://pix-datalake-benjivoid/athena-results/"
+  

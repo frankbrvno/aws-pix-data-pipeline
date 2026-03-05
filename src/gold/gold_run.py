@@ -1,95 +1,185 @@
+"""
+gold_run.py
+-----------
+Camada GOLD (Agregações).
+
+- Lê configs do projeto + datasets (YAML)
+- Para um job_id, lê o dataset SILVER correspondente
+- Calcula agregações (GOLD)
+- Salva 1 arquivo por partição (overwrite)
+- (opcional) registra partição no Athena
+"""
+
 from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
 
-import boto3
 import pandas as pd
 
 from src.core.config import load_app_config, load_datasets_config
 from src.core.logger import get_logger
 from src.core.partitioning import build_partition
-from src.core.s3_io import latest_key, download, upload
-from src.gold.aggregations import gold_pix_uf_mes, gold_fraudes_mes, gold_chaves_tipo_dia
+from src.core.s3_io import latest_key, download, upload, delete_prefix
+from src.core.athena_partitions import add_partition_if_not_exists
+
+from src.gold.jobs import (
+    job_gold_pix_uf_mes,
+    job_gold_fraudes_mes,
+    job_gold_chaves_tipo_dia,
+)
 
 logger = get_logger(__name__)
-S3 = boto3.client("s3")
 
 
-GOLD_JOBS = {
-    "gold_pix_uf_mes": {
-        "source_dataset_id": "pix_municipio",
-        "source_silver_dataset": "transacoes_pix_por_municipio",
-        "out_dataset": "gold_pix_uf_mes",
-        "fn": gold_pix_uf_mes,
-        "partition_type": "month",  # usa o mesmo database YYYY-MM
-    },
-    "gold_fraudes_mes": {
-        "source_dataset_id": "pix_fraudes_med",
-        "source_silver_dataset": "estatisticas_fraudes_pix",
-        "out_dataset": "gold_fraudes_mes",
-        "fn": gold_fraudes_mes,
-        "partition_type": "month",
-    },
-    "gold_chaves_tipo_dia": {
-        "source_dataset_id": "pix_chaves",
-        "source_silver_dataset": "estoque_chaves_pix",
-        "out_dataset": "gold_chaves_tipo_dia",
-        "fn": gold_chaves_tipo_dia,
-        "partition_type": "day",  # database YYYY-MM-DD
-    },
-}
+def _save_gold_idempotent(
+    bucket: str,
+    gold_root: str,
+    job_id: str,
+    part_key: str,
+    part_value: str,
+    df: pd.DataFrame,
+) -> tuple[str, str]:
+    """
+    Salva GOLD de forma idempotente:
+      gold/<job_id>/<part_key>=<part_value>/<job_id>.parquet
+    """
+    gold_prefix = f"{gold_root}/{job_id}/{part_key}={part_value}/"
+    out_key = f"{gold_prefix}{job_id}.parquet"  # <-- fixo
 
-
-def run_gold(job_id: str, database: str) -> None:
-    app = load_app_config()
-    datasets = load_datasets_config()
-
-    if job_id not in GOLD_JOBS:
-        raise SystemExit(f"Gold job '{job_id}' não existe. Opções: {list(GOLD_JOBS)}")
-
-    job = GOLD_JOBS[job_id]
-    source_dataset_id = job["source_dataset_id"]
-    if source_dataset_id not in datasets:
-        raise SystemExit(f"Dataset fonte '{source_dataset_id}' não existe em configs/datasets.yaml")
-
-    # config base
-    bucket = app["aws"]["bucket"]
-    silver_root = app["paths"]["silver"]
-    gold_root = app["paths"].get("gold", "gold")  # se não tiver no app.yaml, usa 'gold'
-
-    # usa o particionamento do DATASET fonte (pix_municipio/pix_fraudes_med/pix_chaves)
-    ds_cfg = datasets[source_dataset_id]
-    part_col, part_value = build_partition(ds_cfg, database)
-
-    run_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-
-    src_silver_dataset = job["source_silver_dataset"]
-    out_dataset = job["out_dataset"]
-    fn = job["fn"]
-
-    # 1) encontra parquet mais recente no SILVER da partição
-    silver_prefix = f"{silver_root}/{src_silver_dataset}/{part_col}={part_value}/"
-    silver_key = latest_key(bucket, silver_prefix)
-    logger.info(f"GOLD [{job_id}] | lendo silver: s3://{bucket}/{silver_key}")
-
-    local_in = "/tmp/gold_input.parquet"
-    download(bucket, silver_key, local_in)
-    df = pd.read_parquet(local_in)
-    os.remove(local_in)
-
-    logger.info(f"linhas silver: {len(df)}")
-
-    # 2) roda agregação
-    out = fn(df)
-
-    # 3) grava no GOLD (mantém mesma partição)
-    gold_prefix = f"{gold_root}/{out_dataset}/{part_col}={part_value}/"
-    out_key = f"{gold_prefix}{out_dataset}_{part_value}_{run_ts}.parquet"
+    # remove qualquer coisa antiga dessa partição
+    delete_prefix(bucket, gold_prefix)
 
     local_out = "/tmp/gold_output.parquet"
-    out.to_parquet(local_out, index=False)
+    df.to_parquet(local_out, index=False)
     uri = upload(bucket, out_key, local_out)
     os.remove(local_out)
 
-    logger.info(f"✅ GOLD salvo: {uri}")
+    return uri, gold_prefix
+
+
+def _maybe_register_athena_partition(
+    app: dict,
+    full_table: str | None,
+    part_key: str,
+    part_value: str,
+    s3_location: str,
+) -> None:
+    """
+    Registra partição no Athena se houver config e permissão.
+    Não quebra o pipeline se falhar (MVP-friendly).
+    """
+    if not full_table:
+        return
+
+    ath = app.get("athena") or {}
+    if not ath.get("database") or not ath.get("output_location"):
+        logger.warning("Athena config ausente no app.yaml. Pulando registro de partição.")
+        return
+
+    try:
+        add_partition_if_not_exists(
+            database=ath["database"],
+            workgroup=ath.get("workgroup", "primary"),
+            output_location=ath["output_location"],
+            full_table=full_table,
+            part_key=part_key,
+            part_value=part_value,
+            s3_location=s3_location,
+        )
+        logger.info(f"📌 Partição registrada no Athena: {full_table} {part_key}={part_value}")
+    except Exception as e:
+        logger.warning(f"Não foi possível registrar partição no Athena agora (ok no MVP). Motivo: {e}")
+
+
+def run_gold(job_id: str, database: str) -> None:
+    """
+    job_id:
+      - gold_pix_uf_mes
+      - gold_fraudes_mes
+      - gold_chaves_tipo_dia
+
+    database:
+      - jobs mensais: YYYY-MM
+      - jobs diários: YYYY-MM-DD
+    """
+    app = load_app_config()
+    datasets = load_datasets_config()
+
+    bucket = app["aws"]["bucket"]
+    silver_root = app["paths"]["silver"]
+    gold_root = app["paths"]["gold"]
+
+    logger.info(f"GOLD job_id={job_id} database={database}")
+
+    # ---------- JOB 1: UF por mês (usa pix_municipio) ----------
+    if job_id == "gold_pix_uf_mes":
+        ds = datasets["pix_municipio"]
+        part_key, part_value = build_partition(ds, database)
+
+        silver_dataset = ds.get("silver_dataset") or ds["bronze_parquet"]
+        silver_prefix = f"{silver_root}/{silver_dataset}/{part_key}={part_value}/"
+        silver_key = latest_key(bucket, silver_prefix)
+
+        local_in = "/tmp/silver_input.parquet"
+        download(bucket, silver_key, local_in)
+        df = pd.read_parquet(local_in)
+        os.remove(local_in)
+
+        df_gold = job_gold_pix_uf_mes(df)
+
+        uri, gold_prefix = _save_gold_idempotent(bucket, gold_root, job_id, part_key, part_value, df_gold)
+        logger.info(f"✅ GOLD salvo: {uri}")
+
+        # se você tiver tabela no athena, configure aqui (ou no YAML depois)
+        full_table = f"{(app.get('athena') or {}).get('database','pix_dw')}.gold_pix_uf_mes"
+        _maybe_register_athena_partition(app, full_table, part_key, part_value, f"s3://{bucket}/{gold_prefix}")
+        return
+
+    # ---------- JOB 2: fraudes por mês (usa pix_fraudes_med) ----------
+    if job_id == "gold_fraudes_mes":
+        ds = datasets["pix_fraudes_med"]
+        part_key, part_value = build_partition(ds, database)
+
+        silver_dataset = ds.get("silver_dataset") or ds["bronze_parquet"]
+        silver_prefix = f"{silver_root}/{silver_dataset}/{part_key}={part_value}/"
+        silver_key = latest_key(bucket, silver_prefix)
+
+        local_in = "/tmp/silver_input.parquet"
+        download(bucket, silver_key, local_in)
+        df = pd.read_parquet(local_in)
+        os.remove(local_in)
+
+        df_gold = job_gold_fraudes_mes(df)
+
+        uri, gold_prefix = _save_gold_idempotent(bucket, gold_root, job_id, part_key, part_value, df_gold)
+        logger.info(f"✅ GOLD salvo: {uri}")
+
+        full_table = f"{(app.get('athena') or {}).get('database','pix_dw')}.gold_fraudes_mes"
+        _maybe_register_athena_partition(app, full_table, part_key, part_value, f"s3://{bucket}/{gold_prefix}")
+        return
+
+    # ---------- JOB 3: chaves por tipo por dia (usa pix_chaves) ----------
+    if job_id == "gold_chaves_tipo_dia":
+        ds = datasets["pix_chaves"]
+        part_key, part_value = build_partition(ds, database)  # aqui deve virar data_part=YYYYMMDD
+
+        silver_dataset = ds.get("silver_dataset") or ds["bronze_parquet"]
+        silver_prefix = f"{silver_root}/{silver_dataset}/{part_key}={part_value}/"
+        silver_key = latest_key(bucket, silver_prefix)
+
+        local_in = "/tmp/silver_input.parquet"
+        download(bucket, silver_key, local_in)
+        df = pd.read_parquet(local_in)
+        os.remove(local_in)
+
+        df_gold = job_gold_chaves_tipo_dia(df)
+
+        uri, gold_prefix = _save_gold_idempotent(bucket, gold_root, job_id, part_key, part_value, df_gold)
+        logger.info(f"✅ GOLD salvo: {uri}")
+
+        full_table = f"{(app.get('athena') or {}).get('database','pix_dw')}.gold_chaves_tipo_dia"
+        _maybe_register_athena_partition(app, full_table, part_key, part_value, f"s3://{bucket}/{gold_prefix}")
+        return
+
+    raise SystemExit(f"job_id inválido: {job_id}")
